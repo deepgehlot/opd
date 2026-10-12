@@ -1,0 +1,19 @@
+# Environment & secrets
+.env
+.env.*
+!.env.example
+
+# Database & local data
+data/
+data/*
+
+# Dependencies
+node_modules/
+
+# Logs & temp files
+*.log
+npm-debug.log*
+.qa/
+.tempmediaStorage/
+.DS_Store
+Thumbs.db
