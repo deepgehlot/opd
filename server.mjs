@@ -19,6 +19,12 @@ export function createApp({ store = getStore(), ai = openaiJSON, speech = transc
     {id:'staff-demo',role:'staff',name:'Demo Staff',email:'staff@opd.demo',mobile:'',department:'Registration',employeeId:'STF-001',salt,password:hash(process.env.STAFF_DEMO_PASSWORD||'Staff@123',salt)},
     {id:'doctor-demo',role:'doctor',name:'Demo Doctor',email:'doctor@opd.demo',mobile:'',department:'Medicine OPD',qualification:'Demo account',employeeId:'DOC-001',salt,password:hash(process.env.DOCTOR_DEMO_PASSWORD||'Doctor@123',salt)}
   ];
+  let seeded = false;
+  async function ensureSeed() {
+    if (seeded) return;
+    await store.seed(demoUsers);
+    seeded = true;
+  }
   function save() { context.getStore().dirty = true; }
   async function flush() {
     const state=context.getStore();if(!state.dirty)return;
@@ -189,6 +195,48 @@ export function createApp({ store = getStore(), ai = openaiJSON, speech = transc
   async function locked(id,fn){return fn();}
   function uploadTicket(b){const ticket=db.uploads.find(x=>x.id===b.uploadId);const token=crypto.createHash('sha256').update(String(b.uploadToken||'')).digest('hex');if(!ticket||ticket.until<Date.now()||ticket.tokenHash!==token||ticket.consumed)fail('Upload expired or unavailable',403);return ticket;}
   async function uploadBuffer(b,kind,u=null,visitId=null){const ticket=uploadTicket(b);if(ticket.kind!==kind||(kind==='document'&&(ticket.owner!==u?.id||ticket.visitId!==visitId)))fail('Upload access denied',403);return {ticket,buffer:await store.readChunks(ticket.id,ticket.total,ticket.size)};}
+  function generateClinicalFallbackQuestions(v) {
+    const text = (v.sources || []).map(s => (s.text || '') + ' ' + (s.name || '')).join(' ').toLowerCase();
+    const hasDiab = /diabet|sugar|glucose|मधुमेह/.test(text) || (v.facts || []).some(f => /diabet|sugar|glucose/.test((f.label || '') + (f.value_en || '')));
+    const hasMeds = (v.facts || []).some(f => f.category === 'current_medicine');
+    const hasAllergy = (v.facts || []).some(f => f.category === 'allergy');
+    const questions = [];
+
+    if (hasDiab) {
+      questions.push({
+        en: 'Is there any history of diabetes or related symptoms?',
+        hi: 'क्या आपको पहले से डायबिटीज या इससे जुड़े लक्षण रहे हैं?'
+      });
+    } else {
+      questions.push({
+        en: 'How many days or weeks have you been experiencing this issue?',
+        hi: 'यह समस्या आपको कितने दिनों या हफ्तों से हो रही है?'
+      });
+    }
+
+    if (!hasMeds) {
+      questions.push({
+        en: 'Are there any medications currently being taken?',
+        hi: 'क्या वर्तमान में कोई दवाएं ली जा रही हैं?'
+      });
+    }
+
+    if (!hasAllergy) {
+      questions.push({
+        en: 'Do you have any known drug or other allergies?',
+        hi: 'क्या आपको किसी दवा या अन्य चीज़ से कोई एलर्जी है?'
+      });
+    }
+
+    if (questions.length < 3) {
+      questions.push({
+        en: 'Are there previous laboratory results for comparison?',
+        hi: 'क्या तुलना के लिए पुरानी जांच या लैब रिपोर्ट उपलब्ध हैं?'
+      });
+    }
+
+    return questions.slice(0, 4);
+  }
   async function extract(v, s, u) {
     s.status = 'processing'; s.error = null; save(); await flush(); if(s.uploadId)await store.clearChunks(s.uploadId); try {
       const content = s.type === 'text' ? [{ type: 'input_text', text: s.text }] : [{ type: 'input_text', text: 'Extract only explicit information from this medical document. Preserve source quotes and actual clinical dates. Do not use upload date.' }, s.mime === 'application/pdf' ? { type: 'input_file', filename: s.name, file_data: `data:application/pdf;base64,${(await store.readFile(s.file)).toString('base64')}` } : { type: 'input_image', image_url: `data:${s.mime};base64,${(await store.readFile(s.file)).toString('base64')}`, detail: 'high' }];
@@ -202,6 +250,9 @@ export function createApp({ store = getStore(), ai = openaiJSON, speech = transc
       s.status = 'done'; s.gaps = out.gaps; s.questions = out.questions; s.extractedAt = new Date().toISOString();
       v.gaps = deduplicateGaps(v.sources.flatMap(s => s.gaps || []));
       v.questions = v.sources.flatMap(s => s.questions || []).slice(0, 5).map(q => ({ ...q, id: uid('Q') }));
+      if (!v.questions.length) {
+        v.questions = generateClinicalFallbackQuestions(v).slice(0, 5).map(q => ({ ...q, id: uid('Q') }));
+      }
       v.version++; log(u, 'Source extracted; unverified facts saved', v.id);
     } catch (e) { s.status = 'failed'; s.error = e.message; save(); throw e; }
   }
@@ -269,48 +320,6 @@ export function createApp({ store = getStore(), ai = openaiJSON, speech = transc
         if (action === 'status' && req.method === 'POST') { if (locks.has(v.id)) fail('Wait for processing', 409); const b = await body(req); if (u.role === 'patient') { if (!['submitted', 'intake'].includes(b.status) || v.status === 'reviewed') fail('Invalid transition', 403); } else { if (!['intake', 'ready'].includes(b.status) || v.status === 'reviewed') fail('Invalid transition'); } v.status = b.status; if (b.clearStaffNote) {staff(u); if (b.staffVerifyNote) { v.staffVerifyNote = String(b.staffVerifyNote).slice(0, 1000); v.staffVerifiedBy = u.name; v.staffVerifiedAt = new Date().toISOString(); } v.staffNote = null; } log(u, 'Status: ' + b.status, v.id); return json(view(v, u)); }
         if (action === 'verify-note' && req.method === 'POST') { staff(u); editable(v,u); const b = await body(req); v.staffVerifyNote = String(b.note || 'Verified by staff').slice(0, 1000); v.staffVerifiedBy = u.name; v.staffVerifiedAt = new Date().toISOString(); v.staffNote = null; v.status = 'ready'; v.version++; log(u, 'Staff verified: ' + v.staffVerifyNote, v.id); return json(view(v, u)); }
         if (action === 'cancel-note' && req.method === 'POST') { staff(u); editable(v,u); v.staffNote = null; v.version++; log(u, 'Staff cancelled review note', v.id); return json(view(v, u)); }
-  function generateClinicalFallbackQuestions(v) {
-    const text = (v.sources || []).map(s => (s.text || '') + ' ' + (s.name || '')).join(' ').toLowerCase();
-    const hasDiab = /diabet|sugar|glucose|मधुमेह/.test(text) || (v.facts || []).some(f => /diabet|sugar|glucose/.test((f.label || '') + (f.value_en || '')));
-    const hasMeds = (v.facts || []).some(f => f.category === 'current_medicine');
-    const hasAllergy = (v.facts || []).some(f => f.category === 'allergy');
-    const questions = [];
-
-    if (hasDiab) {
-      questions.push({
-        en: 'Is there any history of diabetes or related symptoms?',
-        hi: 'क्या आपको पहले से डायबिटीज या इससे जुड़े लक्षण रहे हैं?'
-      });
-    } else {
-      questions.push({
-        en: 'How many days or weeks have you been experiencing this issue?',
-        hi: 'यह समस्या आपको कितने दिनों या हफ्तों से हो रही है?'
-      });
-    }
-
-    if (!hasMeds) {
-      questions.push({
-        en: 'Are there any medications currently being taken?',
-        hi: 'क्या वर्तमान में कोई दवाएं ली जा रही हैं?'
-      });
-    }
-
-    if (!hasAllergy) {
-      questions.push({
-        en: 'Do you have any known drug or other allergies?',
-        hi: 'क्या आपको किसी दवा या अन्य चीज़ से कोई एलर्जी है?'
-      });
-    }
-
-    if (questions.length < 3) {
-      questions.push({
-        en: 'Are there previous laboratory results for comparison?',
-        hi: 'क्या तुलना के लिए पुरानी जांच या लैब रिपोर्ट उपलब्ध हैं?'
-      });
-    }
-
-    return questions.slice(0, 4);
-  }
         if (action === 'clarify' && req.method === 'POST') return await locked(v.id, async () => {
           editable(v, u); if (!v.sources.length) fail('Add a complaint or documents first');
           const known = v.facts.map(f => ({ sourceId: f.sourceId, category: f.category, value: f.value_en, quote: f.quote }));
@@ -359,8 +368,12 @@ export function createApp({ store = getStore(), ai = openaiJSON, speech = transc
     res.setHeader('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; frame-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'");
     const pathname=new URL(req.url,'http://localhost').pathname;
     if(!pathname.startsWith('/api/')){try{await route(req,res);}catch{res.writeHead(404);res.end('Not found');}return;}
+    if(pathname==='/api/config'){
+      res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
+      return res.end(JSON.stringify({demo:process.env.DEMO_MODE!=='false',otp:process.env.DEMO_MODE!=='false'?(process.env.DEMO_OTP||'123456'):null,aiReady:!!process.env.OPENAI_API_KEY,model:process.env.OPENAI_MODEL||'gpt-4.1'}));
+    }
     try{
-      await store.seed(demoUsers);
+      await ensureSeed();
       const work=async()=>{const snapshot=await store.load();return context.run({...snapshot,base:structuredClone(snapshot.data),dirty:false},async()=>{
         try{await route(req,res);}catch(e){
           try{await flush();}catch(commitError){e=commitError;}

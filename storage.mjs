@@ -11,7 +11,7 @@ export class MongoStore {
     return this.promise;
   }
   async connect(){
-    this.client=new MongoClient(this.uri,{maxPoolSize:5,minPoolSize:0,serverSelectionTimeoutMS:10000});await this.client.connect();this.db=this.client.db(this.name);this.bucket=new GridFSBucket(this.db,{bucketName:'documents'});
+    this.client=new MongoClient(this.uri,{maxPoolSize:20,minPoolSize:2,serverSelectionTimeoutMS:10000});await this.client.connect();this.db=this.client.db(this.name);this.bucket=new GridFSBucket(this.db,{bucketName:'documents'});
     await Promise.all([
       this.db.collection('patients').createIndex({mobile:1},{unique:true}),
       this.db.collection('patients').createIndex({email:1},{unique:true,partialFilterExpression:{email:{$gt:''}}}),
@@ -19,9 +19,26 @@ export class MongoStore {
       ...['sessions','challenges','uploads','uploadChunks','rates','leases'].map(c=>this.db.collection(c).createIndex({expiresAt:1},{expireAfterSeconds:0}))
     ]);return this;
   }
-  async seed(users){await this.ready();for(const u of users)await this.db.collection('users').updateOne({_id:u.id},{$setOnInsert:{...u,_rev:0}},{upsert:true});}
-  async load(){await this.ready();const data={},versions={};await Promise.all(collections.map(async c=>{const rows=await this.db.collection(c).find({}).toArray();data[c]=rows.map(strip);versions[c]=Object.fromEntries(rows.map(d=>[d.id,d._rev||0]));}));return {data,versions};}
+  async seed(users){await this.ready();this._cache=null;for(const u of users)await this.db.collection('users').updateOne({_id:u.id},{$setOnInsert:{...u,_rev:0}},{upsert:true});}
+  async load(){
+    await this.ready();
+    const now=Date.now();
+    if(this._cache&&(now-this._cacheTime<2000)){
+      return {data:structuredClone(this._cache.data),versions:structuredClone(this._cache.versions)};
+    }
+    const data={},versions={};
+    await Promise.all(collections.map(async c=>{
+      const query=c==='audit'?this.db.collection(c).find({}).sort({_id:-1}).limit(50):this.db.collection(c).find({});
+      const rows=await query.toArray();
+      data[c]=rows.map(strip);
+      versions[c]=Object.fromEntries(rows.map(d=>[d.id,d._rev||0]));
+    }));
+    this._cache={data,versions};
+    this._cacheTime=Date.now();
+    return {data:structuredClone(data),versions:structuredClone(versions)};
+  }
   async commit(base,data,versions){
+    this._cache=null;
     await this.ready();const changes=[];
     for(const c of collections){const old=new Map(base[c].map(x=>[x.id,x]));for(const row of data[c]){const prev=old.get(row.id);old.delete(row.id);if(!prev||JSON.stringify(prev)!==JSON.stringify(row))changes.push({c,row,kind:prev?'update':'insert'});}for(const row of old.values())changes.push({c,row,kind:'delete'});}
     if(!changes.length)return;
@@ -30,7 +47,7 @@ export class MongoStore {
     catch(e){if(e.code===11000)throw error('Patient already registered, or an active visit already exists. Refresh the queue.');throw e;}
     finally{await session.endSession();}
   }
-  async lock(key,fn){await this.ready();const owner=crypto.randomUUID(),now=new Date(),expiresAt=new Date(Date.now()+180000);
+  async lock(key,fn){this._cache=null;await this.ready();const owner=crypto.randomUUID(),now=new Date(),expiresAt=new Date(Date.now()+180000);
     try{await this.db.collection('leases').findOneAndUpdate({_id:key,expiresAt:{$lte:now}},{$set:{owner,expiresAt}},{upsert:true});}catch(e){if(e.code===11000)throw error('This record is being processed. Wait and retry.');throw e;}
     try{return await fn();}finally{await this.db.collection('leases').deleteOne({_id:key,owner});}
   }

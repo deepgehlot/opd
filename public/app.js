@@ -11,7 +11,7 @@ const val=f=>lang==='hi'?f.value_hi:f.value_en;
 const badge=s=>`<span class="badge ${esc(s)}">${esc(t(s))}</span>`;
 function toast(msg){const el=$('#toast');el.textContent=msg;el.style.display='block';clearTimeout(toast.timer);toast.timer=setTimeout(()=>el.style.display='none',6000);}
 async function api(p,b){const r=await fetch('/api'+p,{method:b===undefined?'GET':'POST',headers:b===undefined?{}:{'Content-Type':'application/json'},body:b===undefined?undefined:JSON.stringify(b)});let j;try{j=await r.json();}catch{throw new Error('Server returned an invalid response. Check the deployment logs. / सर्वर प्रतिक्रिया जांचें।');}if(!r.ok)throw new Error(j.error+(j.detail?' '+j.detail:''));return j;}
-async function task(fn){if(busy)return;busy=true;const bar=document.createElement('div');bar.className='busy-bar';document.body.append(bar);document.querySelectorAll('button').forEach(b=>b.disabled=true);try{await fn();}catch(e){toast(e.message);if(current){try{renderVisit(await api('/visits/'+current.id));}catch{}}}finally{busy=false;bar.remove();document.querySelectorAll('button').forEach(b=>b.disabled=false);}}
+async function task(fn){if(busy)return;busy=true;const bar=document.createElement('div');bar.className='busy-bar';document.body.append(bar);try{await fn();}catch(e){toast(e.message);if(current){try{renderVisit(await api('/visits/'+current.id));}catch{}}}finally{busy=false;bar.remove();}}
 function header(){return `<header><div class="brand"><i>+</i>OPD <span>Brief</span></div><div class="top-actions">${user?`<span class="muted">${esc(user.name)} · ${t(user.role)}</span><button class="secondary small" data-action="account">${t('account')}</button>`:''}<button class="secondary small" data-action="language">${lang==='en'?'हिन्दी':'English'}</button>${user?`<button class="secondary small" data-action="logout">${t('logout')}</button>`:''}</div></header>`;}
 function footer(){return `<div class="page-footer">${t('safety')}</div>`;}
 function profileFields(p={}){return ['name','fatherName','mobile','email','city','state','age'].map(k=>{const hints={name:lang==='hi'?'पूरा नाम दर्ज करें':'Enter full name',fatherName:'',mobile:lang==='hi'?'10 अंकों का मोबाइल नंबर (प्रति मरीज एक)':'10-digit mobile — one patient per number',email:lang==='hi'?'सही ईमेल पता (वैकल्पिक)':'Valid email address (optional)',age:lang==='hi'?'0 से 120 के बीच आयु':'Age between 0 and 120',city:'',state:''};return `<div class="field"><label for="field-${k}">${t(k)} ${['name','mobile','age'].includes(k)?'<span class="req-star">*</span>':`<span class="opt-label">(${t('optional')})</span>`}</label><input id="field-${k}" name="${k}" ${['name','mobile','age'].includes(k)?'required':''} ${k==='age'?'type="number" min="0" max="120" step="1"':k==='email'?'type="email" autocomplete="email"':k==='mobile'?'type="tel" inputmode="numeric" pattern="[0-9]{10}" maxlength="10" autocomplete="tel"':k==='name'?'autocomplete="name"':''} value="${esc(p[k]||'')}" data-field="${k}"><span class="field-hint" id="hint-${k}">${hints[k]||''}</span><span class="field-error" id="err-${k}"></span></div>`;}).join('');}
@@ -1543,9 +1543,20 @@ document.addEventListener('click',async e=>{const b=e.target.closest('[data-acti
  if(a==='record'){try{await record(b.dataset.target,b);}catch(e){toast(e.message);}return;}
  await task(async()=>{
   if(a==='logout'){await api('/logout',{});user=null;current=null;queueTab=null;patientEditing=false;renderAuth();}
-  if(a==='back'){sessionStorage.removeItem('active_new_visit_id');window.activeNewVisitId=null;patientEditing=false;current=null;await load();}
-  if(a==='open'){sessionStorage.removeItem('active_new_visit_id');window.activeNewVisitId=null;patientEditing=false;renderVisit(await api('/visits/'+b.dataset.id));}
-  if(a==='edit-visit'){sessionStorage.removeItem('active_new_visit_id');window.activeNewVisitId=null;patientEditing=false;renderVisit(await api('/visits/'+b.dataset.id));}
+  if(a==='back'){
+    sessionStorage.removeItem('active_new_visit_id');window.activeNewVisitId=null;patientEditing=false;current=null;
+    if(user&&visits&&visits.length){renderDashboard();load().catch(()=>{});}else{await load();}
+  }
+  if(a==='open'||a==='edit-visit'){
+    sessionStorage.removeItem('active_new_visit_id');window.activeNewVisitId=null;patientEditing=false;
+    const existing=visits.find(v=>v.id===b.dataset.id);
+    if(existing){
+      renderVisit(existing);
+      api('/visits/'+b.dataset.id).then(fresh=>{if(current&&current.id===fresh.id)renderVisit(fresh);}).catch(()=>{});
+    }else{
+      renderVisit(await api('/visits/'+b.dataset.id));
+    }
+  }
   if(a==='toggle-edit'){patientEditing=!patientEditing;if(current)renderVisit(current);}
   if(a==='chip-answer'){
     const targetId=b.dataset.target;
@@ -1611,8 +1622,9 @@ document.addEventListener('click',async e=>{const b=e.target.closest('[data-acti
       throw new Error(lang==='hi'?'कृपया वर्तमान समस्या / परेशानी लिखें या दस्तावेज़ चुनें।':'Please enter the current issue or select a document.');
     }
     const newV=await api('/visits',{patientId:user.patientId,forceNew:true});
+    let updatedV=newV;
     if(text){
-      await api('/visits/'+newV.id+'/source',{
+      updatedV=await api('/visits/'+newV.id+'/source',{
         type:'text',
         text,
         speaker:$('#new-speaker')?.value||'patient',
@@ -1622,21 +1634,16 @@ document.addEventListener('click',async e=>{const b=e.target.closest('[data-acti
     if(selectedFiles.length){
       for(const f of selectedFiles){
         const ticket=await sendChunks(f,{kind:'document',visitId:newV.id,name:f.name,mime:f.type});
-        await api(`/visits/${newV.id}/source`,{type:'document',...ticket});
+        updatedV=await api(`/visits/${newV.id}/source`,{type:'document',...ticket});
       }
     }
     window.newCapturedBlobFiles=[];
     patientNewVisitOpen=false;
-    try {
-      await api('/visits/'+newV.id+'/clarify', {});
-    } catch(e) {
-      console.warn('Auto clarify notice:', e.message);
-    }
     sessionStorage.setItem('active_new_visit_id', newV.id);
     window.activeNewVisitId = newV.id;
     toast(lang==='hi'?'नई विज़िट दर्ज की गई। AI द्वारा पूछे गए विवरण भरें।':'New visit recorded. Please answer AI clarifying questions.');
-    visits=await api('/visits');
-    renderVisit(await api('/visits/'+newV.id));
+    renderVisit(updatedV);
+    api('/visits').then(vList=>{visits=vList;}).catch(()=>{});
     return;
   }
   if(a==='register-modal')profileModal({},true);
