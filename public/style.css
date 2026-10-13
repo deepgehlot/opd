@@ -67,3 +67,29 @@ input.input-error{border-color:var(--red)!important;background:var(--red-bg);box
 .patient-pill{display:inline-block;background:#ffffff;border:1px solid #cfe0d6;border-radius:6px;padding:5px 9px;margin:3px 4px 3px 0;font-size:13px;font-weight:600;color:#164534}
 .patient-pill.alert{background:#fef2f2;border-color:#fecaca;color:#991b1b}
 .patient-pill.ok{background:#f0fdf4;border-color:#bbf7d0;color:#166534}
+
+/* Enhanced Clinical Category Headers & Fact Cards */
+.category-header{display:flex;align-items:center;justify-content:space-between;background:linear-gradient(90deg,#eef7f2 0%,#f9fbf9 100%);border-left:4.5px solid #126b52;border-radius:8px;padding:10px 14px;margin:22px 0 12px;box-shadow:0 1px 3px rgba(18,107,82,0.05)}
+.category-header.category-header-alert{background:linear-gradient(90deg,#fef2f2 0%,#fffbfb 100%);border-left-color:#dc2626}
+.category-title{font-size:16.5px;font-weight:800;color:#0f4b39;display:flex;align-items:center;gap:8px;letter-spacing:-0.2px}
+.category-header-alert .category-title{color:#991b1b}
+.category-count{font-size:12px;font-weight:700;background:#ffffff;border:1px solid #c2dbd0;color:#126b52;padding:3px 9px;border-radius:12px}
+.category-header-alert .category-count{border-color:#fca5a5;color:#b91c1c}
+.fact{background:#ffffff;border:1px solid #e0eae4;border-radius:10px;padding:14px 16px;margin-bottom:10px;line-height:1.55;transition:border-color .15s,box-shadow .15s}
+.fact:hover{border-color:#b3d7c5;box-shadow:0 2px 8px rgba(18,107,82,0.05)}
+.fact.attention{background:#fffbeb;border:1.5px solid #fde68a;border-left:4.5px solid #d97706;padding:14px 16px;margin:10px 0;border-radius:10px}
+.fact-label{font-size:15.5px;font-weight:800;color:#124336;margin-bottom:5px;display:flex;align-items:center;gap:6px;text-transform:capitalize;letter-spacing:-0.15px}
+.fact.attention .fact-label{color:#92400e}
+.fact-value{font-size:14.5px;color:#1e293b;margin-bottom:6px}
+.category-header.category-header-complaint{background:linear-gradient(90deg,#e6f4ed 0%,#f5fcf8 100%);border-left:5px solid #0f766e;box-shadow:0 2px 6px rgba(15,118,110,0.08)}
+.category-header-complaint .category-title{color:#0b564e;font-size:17.5px}
+.category-header-complaint .category-count{background:#0f766e;color:#ffffff;border-color:#0f766e}
+.fact-label span:first-child{display:inline-flex;align-items:center;justify-content:center}
+
+/* Staff Intake Card Styles */
+.staff-intake-card{border:2px solid #2563eb;background:linear-gradient(135deg,#eff6ff 0%,#ffffff 100%);box-shadow:0 3px 12px rgba(37,99,235,0.08);border-radius:12px;margin-bottom:20px;padding:20px 22px}
+.staff-intake-header{display:flex;justify-content:space-between;align-items:center;border-bottom:1.5px solid #dbeafe;padding-bottom:10px;margin-bottom:12px}
+
+/* Patient AI Questions Intake & Guide Styles */
+.questions-intake-panel{border:2px solid #126b52;background:#fbfdfc;box-shadow:0 4px 18px rgba(18,107,82,0.1);border-radius:14px;padding:22px;margin-bottom:22px}
+.intake-guide-panel{background:#ffffff;border:1.5px solid #b8dcce;border-radius:14px;padding:20px;box-shadow:0 3px 12px rgba(18,107,82,0.06);margin-bottom:20px}

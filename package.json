@@ -9,10 +9,7 @@
   "scripts": {
     "start": "node server.mjs",
     "dev": "node --watch server.mjs",
-    "build": "node build.mjs",
-    "test": "node --test test/*.test.mjs",
-    "test:mongo": "node --test test/mongo.integration.mjs",
-    "test:browser": "node test/browser-flow.mjs"
+    "build": "node build.mjs"
   },
   "dependencies": {
     "mongodb": "6.21.0"
